@@ -7,7 +7,7 @@ reader_window.py — 阅读器窗口
 """
 import html as html_mod
 
-from PySide6.QtCore import QEvent, Qt, QSettings, QTimer, QUrl
+from PySide6.QtCore import QPoint, QEvent, Qt, QSettings, QTimer, QUrl
 from PySide6.QtGui import (
     QColor, QFont, QImage, QTextCharFormat, QTextCursor, QTextDocument)
 from PySide6.QtWidgets import (
@@ -54,6 +54,8 @@ class ReaderWindow(QDialog):
         self.book = BookReader()
         self.cur = 0
         self.pending_scroll = None      # 待恢复的滚动位置比例
+        self.page_mark_pos = None       # 翻页拼接基准线（文档字符位置）
+        self._search_sels = []          # 搜索高亮 selections
         self.settings = QSettings('EbookStudio', 'reader')
         self.setWindowTitle(f'阅读 — {book_row["title"]}')
         self.resize(1250, 800)
@@ -108,6 +110,10 @@ class ReaderWindow(QDialog):
         self.width_action = bar.addAction('宽度', self._cycle_width)
         self.width_action.setToolTip('切换正文显示宽度')
         self.dark_action = bar.addAction('夜间', self._toggle_dark)
+        self.mark_action = bar.addAction('翻页线', self._toggle_page_mark)
+        self.mark_action.setCheckable(True)
+        self.mark_action.setChecked(self.settings.value('page_mark', True, bool))
+        self.mark_action.setToolTip('翻页后在拼接页起始行显示下划线标记')
         self.fullscreen_action = bar.addAction('⛶ 全屏', self._toggle_fullscreen)
         self.fullscreen_action.setShortcut('F11')
         bar.addSeparator()
@@ -186,6 +192,10 @@ class ReaderWindow(QDialog):
         # TXT 的 get_chapter 已构造安全 HTML（标签由代码生成），无需再转义
         self.browser.setHtml(body)
         self.pos_lab.setText(f'{self.cur + 1} / {len(self.book.chapters)}')
+        # 换章后拼接线与旧文档搜索高亮均失效
+        self.page_mark_pos = None
+        self._search_sels = []
+        self._update_extra_selections()
         self._save_position()
 
     def _on_chapter(self, row):
@@ -243,6 +253,13 @@ class ReaderWindow(QDialog):
         cur_dark = self.settings.value('dark', False, bool)
         self._apply_theme(not cur_dark)
 
+    def _toggle_page_mark(self):
+        on = self.mark_action.isChecked()
+        self.settings.setValue('page_mark', on)
+        if not on:
+            self.page_mark_pos = None
+        self._update_extra_selections()
+
     # ---------------- 正文宽度 / 全屏 ----------------
     WIDTH_PRESETS = [0, 1400, 1200, 1000, 800, 640]   # 0 = 不限（全宽）
 
@@ -269,6 +286,38 @@ class ReaderWindow(QDialog):
             self.showNormal()
         else:
             self.showFullScreen()
+
+    # ---------------- 翻页拼接线 ----------------
+    def _mark_seam(self, dy):
+        """记录滚动后新视口起始行的文档位置（dy<0 表示向上翻页记视口尾行）"""
+        if not self.settings.value('page_mark', True, bool):
+            return
+        if dy >= 0:
+            c = self.browser.cursorForPosition(QPoint(0, dy))
+        else:
+            vh = self.browser.viewport().height()
+            c = self.browser.cursorForPosition(QPoint(0, vh))
+        self.page_mark_pos = c.position()
+        self._update_extra_selections()
+
+    def _update_extra_selections(self):
+        """合并显示: 搜索高亮 + 翻页拼接线下划线"""
+        sels = list(self._search_sels)
+        if self.page_mark_pos is not None and \
+                self.settings.value('page_mark', True, bool):
+            doc = self.browser.document()
+            pos = min(self.page_mark_pos, max(0, doc.characterCount() - 2))
+            cur = QTextCursor(doc)
+            cur.setPosition(pos)
+            block = cur.block()
+            if block.isValid():
+                sel = QTextEdit.ExtraSelection()
+                bc = QTextCursor(block)          # 覆盖整行
+                sel.cursor = bc
+                sel.format.setFontUnderline(True)
+                sel.format.setUnderlineColor(QColor('#d9534f'))
+                sels.append(sel)
+        self.browser.setExtraSelections(sels)
 
     # ---------------- 搜索 ----------------
     def _toggle_search(self):
@@ -320,7 +369,8 @@ class ReaderWindow(QDialog):
             sel.format.setForeground(QColor('#000000'))
             sel.cursor = cur
             sels.append(sel)
-        self.browser.setExtraSelections(sels)
+        self._search_sels = sels
+        self._update_extra_selections()
         if sels:
             target = sels[min(occurrence, len(sels) - 1)].cursor
             self.browser.setTextCursor(target)
@@ -404,6 +454,7 @@ class ReaderWindow(QDialog):
             if sb.value() >= sb.maximum():
                 self._next()
             else:
+                self._mark_seam(int(sb.pageStep() * 0.92))   # 先记拼接行再滚动
                 sb.setValue(min(sb.value() + int(sb.pageStep() * 0.92),
                                 sb.maximum()))
             return True
@@ -413,6 +464,7 @@ class ReaderWindow(QDialog):
                     self.pending_scroll = 1.0
                     self._prev()
             else:
+                self._mark_seam(-int(sb.pageStep() * 0.92))
                 sb.setValue(max(sb.value() - int(sb.pageStep() * 0.92), 0))
             return True
         if key == Qt.Key_Down:

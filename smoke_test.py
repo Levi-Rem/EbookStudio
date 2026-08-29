@@ -263,6 +263,25 @@ check('目录栏 PageDown 转发正文', consumed and sb5.value() > v0,
       f'消费={consumed}, 滚动 {v0}->{sb5.value()}')
 rw5.close()
 
+# 22. 翻页拼接线：PageDown 后标记出现，关闭开关后消失
+rw6 = ReaderWindow({'path': SRC['神墓'], 'title': '神墓'}, lib2)
+rw6.show()
+qapp.processEvents()
+sb6 = rw6.browser.verticalScrollBar()
+rw6.handle_reader_key(QKeyEvent(QEvent.KeyPress, Qt.Key_PageDown,
+                                Qt.KeyboardModifier.NoModifier))
+qapp.processEvents()
+sels6 = rw6.browser.extraSelections()
+has_underline = any(s.format.fontUnderline() for s in sels6)
+check('翻页线标记出现', rw6.page_mark_pos is not None and has_underline,
+      f'pos={rw6.page_mark_pos}, selections={len(sels6)}')
+rw6.mark_action.setChecked(False)
+rw6._toggle_page_mark()
+qapp.processEvents()
+check('翻页线开关关闭', not any(s.format.fontUnderline()
+                              for s in rw6.browser.extraSelections()))
+rw6.close()
+
 # 20. 书库目录：安全文件名 / 复制去重 / 路径更新级联
 check('文件名安全化',
       appmod.sanitize_name('第1卷: "测试"<>|/?*') == appmod.sanitize_name('第1卷: "测试"<>|/?*')
