@@ -20,9 +20,20 @@ from PySide6.QtWidgets import (
 import library, metadata
 from reader_window import ReaderWindow
 
-APP_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_DIR = os.path.join(APP_DIR, 'data')
-COVER_DIR = os.path.join(APP_DIR, 'covers')
+IS_FROZEN = getattr(sys, 'frozen', False)
+# 打包后 __file__ 指向 _internal；kindlegen 等随 exe 安装，取 exe 所在目录
+APP_DIR = os.path.dirname(sys.executable) if IS_FROZEN \
+    else os.path.dirname(os.path.abspath(__file__))
+
+def _user_data_dir():
+    """用户数据(书库库/封面缓存)放 LOCALAPPDATA，安装到 Program Files 也可写"""
+    base = os.environ.get('LOCALAPPDATA') or os.path.expanduser('~')
+    d = os.path.join(base, 'EbookStudio')
+    os.makedirs(d, exist_ok=True)
+    return d
+
+DATA_DIR = os.path.join(_user_data_dir(), 'data')
+COVER_DIR = os.path.join(_user_data_dir(), 'covers')
 DB_PATH = os.path.join(DATA_DIR, 'library.db')
 WORKER = os.path.join(APP_DIR, 'convert_worker.py')
 EXTS = ('.txt', '.epub', '.mobi', '.azw3')
@@ -537,7 +548,11 @@ class MainWindow(QMainWindow):
             lambda err: self._on_proc_error(jf, err))
         self.conv_action.setEnabled(False)
         self.statusBar().showMessage('转换中… 0%')
-        self.proc.start(sys.executable, ['-X', 'utf8', WORKER, jf])
+        if IS_FROZEN:
+            # 打包模式: 通过本 exe 的 --worker 分发运行转换逻辑
+            self.proc.start(sys.executable, ['--worker', jf])
+        else:
+            self.proc.start(sys.executable, ['-X', 'utf8', WORKER, jf])
 
     def _on_proc_out(self):
         data = bytes(self.proc.readAllStandardOutput()).decode('utf-8', 'replace')
@@ -591,6 +606,13 @@ class MainWindow(QMainWindow):
 
 
 def main():
+    # 打包模式: EbookStudio.exe --worker <jobs.json> 作为转换子进程运行
+    if len(sys.argv) >= 3 and sys.argv[1] == '--worker':
+        import json
+        import convert_worker
+        with open(sys.argv[2], encoding='utf-8') as f:
+            convert_worker.run(json.load(f))
+        return
     app = QApplication(sys.argv)
     app.setStyle('Fusion')
     win = MainWindow()

@@ -204,7 +204,16 @@ def build_epub(meta, chapters, out_path, cover_path=None):
 
 # ---------------- MOBI / AZW3 ----------------
 def find_converter():
-    here = os.path.dirname(os.path.abspath(__file__))
+    if getattr(sys, 'frozen', False):
+        exe_dir = os.path.dirname(sys.executable)
+        # PyInstaller onedir: 数据文件在 exe 目录与 _internal 两个位置都可能
+        for here in (exe_dir, os.path.join(exe_dir, '_internal')):
+            p = os.path.join(here, 'kindlegen.exe')
+            if os.path.exists(p):
+                return 'kindlegen', p
+        return None
+    else:
+        here = os.path.dirname(os.path.abspath(__file__))
     p = os.path.join(here, 'kindlegen.exe')
     if os.path.exists(p):
         return 'kindlegen', p
