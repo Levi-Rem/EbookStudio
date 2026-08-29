@@ -58,6 +58,8 @@ class ReaderWindow(QDialog):
         self.setWindowTitle(f'阅读 — {book_row["title"]}')
         self.resize(1250, 800)
         self.setModal(False)
+        # QDialog 默认无最大化按钮；开启以支持最大化/全屏切换
+        self.setWindowFlag(Qt.WindowMaximizeButtonHint, True)
         self._build_ui()
         try:
             self.book.open(book_row['path'])
@@ -102,7 +104,11 @@ class ReaderWindow(QDialog):
         bar.addSeparator()
         bar.addAction('A+', self._zoom_in)
         bar.addAction('A-', self._zoom_out)
+        self.width_action = bar.addAction('宽度', self._cycle_width)
+        self.width_action.setToolTip('切换正文显示宽度')
         self.dark_action = bar.addAction('夜间', self._toggle_dark)
+        self.fullscreen_action = bar.addAction('⛶ 全屏', self._toggle_fullscreen)
+        self.fullscreen_action.setShortcut('F11')
         bar.addSeparator()
         a_search = bar.addAction('🔍 搜索', self._toggle_search)
         a_search.setShortcut('Ctrl+F')
@@ -112,12 +118,19 @@ class ReaderWindow(QDialog):
         self.pos_lab = QLabel(' ')
         bar.addWidget(self.pos_lab)
         cv.addWidget(bar)
+        # 正文容器: stretch-browser-stretch，限制 browser 宽度时自动居中
+        bh = QHBoxLayout()
+        bh.setContentsMargins(0, 0, 0, 0)
+        bh.addStretch(1)
         self.browser = EpubBrowser(self.book, self)
         self.browser.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        bh.addWidget(self.browser, 1)
+        bh.addStretch(1)
+        cv.addLayout(bh)
         self.browser.setFont(QFont('Microsoft YaHei',
                                    self.settings.value('fontsize', 12, int)))
         self._apply_theme(self.settings.value('dark', False, bool))
-        cv.addWidget(self.browser)
+        self._apply_width(self.settings.value('width_idx', 0, int))
         root.addWidget(center, 1)
 
         # 右侧: 搜索 / 书签 面板
@@ -228,6 +241,33 @@ class ReaderWindow(QDialog):
     def _toggle_dark(self):
         cur_dark = self.settings.value('dark', False, bool)
         self._apply_theme(not cur_dark)
+
+    # ---------------- 正文宽度 / 全屏 ----------------
+    WIDTH_PRESETS = [0, 1400, 1200, 1000, 800, 640]   # 0 = 不限（全宽）
+
+    def _apply_width(self, idx):
+        """按档位限制正文控件宽度并居中；0 表示跟随窗口全宽"""
+        idx = max(0, min(idx, len(self.WIDTH_PRESETS) - 1))
+        w = self.WIDTH_PRESETS[idx]
+        if w > 0:
+            self.browser.setFixedWidth(w)
+        else:
+            self.browser.setMinimumWidth(0)
+            self.browser.setMaximumWidth(0x00FFFFFF)
+        label = '全宽' if w == 0 else f'{w}px'
+        self.width_action.setText(f'宽度: {label}')
+        self.width_idx = idx
+        self.settings.setValue('width_idx', idx)
+
+    def _cycle_width(self):
+        self._apply_width((getattr(self, 'width_idx', 0) + 1)
+                          % len(self.WIDTH_PRESETS))
+
+    def _toggle_fullscreen(self):
+        if self.isFullScreen():
+            self.showNormal()
+        else:
+            self.showFullScreen()
 
     # ---------------- 搜索 ----------------
     def _toggle_search(self):
@@ -383,6 +423,11 @@ class ReaderWindow(QDialog):
         return False
 
     def keyPressEvent(self, ev):
+        # QDialog 默认 Esc=reject 关窗；全屏时 Esc 应先退出全屏
+        if ev.key() == Qt.Key_Escape and self.isFullScreen():
+            self.showNormal()
+            ev.accept()
+            return
         if self.handle_reader_key(ev):
             ev.accept()
             return

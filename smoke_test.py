@@ -220,6 +220,35 @@ r5b = reader.BookReader().open(ep)
 check('close 后可重开', len(r5b.chapters) > 100, f'{len(r5b.chapters)} 章')
 r5b.close()
 
+# 18. 表头排序（SortRole 数值排序，大小列不得按字符串序）
+import app as appmod
+from PySide6.QtCore import Qt
+m = appmod.LibraryModel()
+m.set_rows([{'title': 'a', 'author': '', 'format': '', 'size': 900, 'added': '', 'path': ''},
+            {'title': 'b', 'author': '', 'format': '', 'size': 1200, 'added': '', 'path': ''},
+            {'title': 'c', 'author': '', 'format': '', 'size': 700, 'added': '', 'path': ''}])
+from PySide6.QtCore import QSortFilterProxyModel
+px = QSortFilterProxyModel()
+px.setSourceModel(m)
+px.setSortRole(appmod.SORT_ROLE)             # 与 app.py 一致
+px.sort(3, Qt.SortOrder.AscendingOrder)     # 大小列
+vals = [px.data(px.index(i, 3), Qt.ItemDataRole.DisplayRole) for i in range(3)]
+check('大小列数值排序', vals == ['700 B', '900 B', '1.2 KB'], str(vals))
+
+# 19. 正文宽度档位 / 全屏切换
+rw4 = ReaderWindow({'path': SRC['神墓'], 'title': '神墓'}, lib2)
+rw4.show()
+qapp.processEvents()
+rw4._apply_width(3)     # 1000px
+check('正文宽度档位', rw4.browser.width() <= 1000 and '1000' in rw4.width_action.text(),
+      rw4.width_action.text())
+rw4._cycle_width()
+check('宽度循环+记忆', rw4.settings.value('width_idx', -1, int) == 4,
+      f"idx={rw4.settings.value('width_idx', -1, int)}")
+rw4._apply_width(0)     # 恢复全宽
+check('全宽恢复', rw4.browser.maximumWidth() >= 0x00FFFFFF)
+rw4.close()
+
 print()
 fails = [r for r in results if not r[1]]
 print(f'===== {len(results)-len(fails)}/{len(results)} 通过 =====')

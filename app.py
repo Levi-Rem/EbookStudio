@@ -26,6 +26,8 @@ DB_PATH = os.path.join(DATA_DIR, 'library.db')
 WORKER = os.path.join(APP_DIR, 'convert_worker.py')
 EXTS = ('.txt', '.epub', '.mobi', '.azw3')
 COLUMNS = ['书名', '作者', '格式', '大小', '加入时间', '路径']
+# Qt::SortRole = 38（PySide6 新版已移除该枚举名，按官方数值使用）
+SORT_ROLE = 38
 
 
 def human_size(n):
@@ -67,6 +69,9 @@ def default_cover(title, author):
     return pm
 
 
+COL_KEYS = {'书名': 'title', '作者': 'author', '格式': 'format',
+            '大小': 'size', '加入时间': 'added', '路径': 'path'}
+
 class LibraryModel(QAbstractTableModel):
     def __init__(self):
         super().__init__()
@@ -87,13 +92,15 @@ class LibraryModel(QAbstractTableModel):
         if not index.isValid():
             return None
         r = self.rows[index.row()]
-        key = {'书名': 'title', '作者': 'author', '格式': 'format',
-               '大小': 'size', '加入时间': 'added', '路径': 'path'}[
-                   COLUMNS[index.column()]]
+        key = COL_KEYS[COLUMNS[index.column()]]
         if role == Qt.DisplayRole:
             if key == 'size':
                 return human_size(r.get('size', 0))
             return str(r.get(key, ''))
+        if role == SORT_ROLE:
+            # 大小按数值、其余按文本，避免 "975 KB" > "1.2 MB" 这类字符串序错误
+            v = r.get(key, '')
+            return int(v) if key == 'size' else str(v)
         return None
 
     def headerData(self, s, o, role=Qt.DisplayRole):
@@ -151,6 +158,7 @@ class MainWindow(QMainWindow):
         self.proxy = QSortFilterProxyModel()
         self.proxy.setSourceModel(self.model)
         self.proxy.setFilterCaseSensitivity(Qt.CaseInsensitive)
+        self.proxy.setSortRole(SORT_ROLE)     # model 已提供数值化的排序值
         self.proc = None
         self._build_ui()
         self.refresh()
@@ -200,6 +208,7 @@ class MainWindow(QMainWindow):
         self.table.verticalHeader().setVisible(False)
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
         self.table.setShowGrid(False)
+        self.table.setSortingEnabled(True)     # 点击表头排序（proxy 转发 SortRole）
         self.table.doubleClicked.connect(lambda *_: self.read_book())
         self.table.selectionModel().selectionChanged.connect(
             lambda *_: self.update_detail())
