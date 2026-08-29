@@ -7,7 +7,7 @@ reader_window.py — 阅读器窗口
 """
 import html as html_mod
 
-from PySide6.QtCore import Qt, QSettings, QTimer, QUrl
+from PySide6.QtCore import QEvent, Qt, QSettings, QTimer, QUrl
 from PySide6.QtGui import (
     QColor, QFont, QImage, QTextCharFormat, QTextCursor, QTextDocument)
 from PySide6.QtWidgets import (
@@ -90,6 +90,7 @@ class ReaderWindow(QDialog):
         self.list = QListWidget()
         self.list.setFixedWidth(240)
         self.list.currentRowChanged.connect(self._on_chapter)
+        self.list.installEventFilter(self)   # PageUp/Down 转发给正文翻页
         lv.addWidget(self.list)
         root.addWidget(left)
 
@@ -421,6 +422,15 @@ class ReaderWindow(QDialog):
             sb.setValue(max(sb.value() - max(sb.singleStep(), 4), 0))
             return True
         return False
+
+    def eventFilter(self, obj, ev):
+        """目录栏持有焦点时，PageUp/PageDown 也作用于正文翻页，
+        避免误滚目录列表（↑/↓ 仍保留章节选择功能）"""
+        if obj is self.list and ev.type() == QEvent.KeyPress and \
+                ev.key() in (Qt.Key_PageUp, Qt.Key_PageDown):
+            if self.handle_reader_key(ev):
+                return True
+        return super().eventFilter(obj, ev)
 
     def keyPressEvent(self, ev):
         # QDialog 默认 Esc=reject 关窗；全屏时 Esc 应先退出全屏

@@ -249,6 +249,20 @@ rw4._apply_width(0)     # 恢复全宽
 check('全宽恢复', rw4.browser.maximumWidth() >= 0x00FFFFFF)
 rw4.close()
 
+# 21. 目录栏焦点时 PageDown 应翻正文页（而非滚动目录列表）
+rw5 = ReaderWindow({'path': SRC['神墓'], 'title': '神墓'}, lib2)
+rw5.show()
+qapp.processEvents()
+rw5.list.setFocus()
+qapp.processEvents()
+sb5 = rw5.browser.verticalScrollBar()
+v0 = sb5.value()
+ev_list = QKeyEvent(QEvent.KeyPress, Qt.Key_PageDown, Qt.KeyboardModifier.NoModifier)
+consumed = rw5.eventFilter(rw5.list, ev_list)
+check('目录栏 PageDown 转发正文', consumed and sb5.value() > v0,
+      f'消费={consumed}, 滚动 {v0}->{sb5.value()}')
+rw5.close()
+
 # 20. 书库目录：安全文件名 / 复制去重 / 路径更新级联
 check('文件名安全化',
       appmod.sanitize_name('第1卷: "测试"<>|/?*') == appmod.sanitize_name('第1卷: "测试"<>|/?*')
