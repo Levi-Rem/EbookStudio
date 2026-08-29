@@ -139,6 +139,11 @@ class ReaderWindow(QDialog):
         self.browser.setFont(QFont('Microsoft YaHei',
                                    self.settings.value('fontsize', 12, int)))
         self._apply_theme(self.settings.value('dark', False, bool))
+        # 章节刚载入时文档布局异步进行, maximum() 短暂偏小;
+        # 布局稳定前翻页不画接缝线, 避免误判"剩余不足一页"把线画在章节中间
+        self._layout_ready = False
+        self.browser.document().documentLayout().documentSizeChanged.connect(
+            self._on_layout_stable)
         self._apply_width(self.settings.value('width_idx', 0, int))
         root.addWidget(center, 1)
 
@@ -189,10 +194,16 @@ class ReaderWindow(QDialog):
         self.side.addTab(w, '书签')
 
     # ---------------- 章节渲染 ----------------
+    def _on_layout_stable(self):
+        self._layout_ready = True
+
     def _render(self):
         title, body = self.book.get_chapter(self.cur)
         # TXT 的 get_chapter 已构造安全 HTML（标签由代码生成），无需再转义
+        self._layout_ready = False     # setHtml 后布局重新异步计算
         self.browser.setHtml(body)
+        # 兜底: 极端情况下布局信号不触发时不永久禁用翻页线
+        QTimer.singleShot(500, self._on_layout_stable)
         self.pos_lab.setText(f'{self.cur + 1} / {len(self.book.chapters)}')
         # 换章后拼接线与旧文档搜索高亮均失效
         self.page_mark_pos = None
@@ -295,7 +306,8 @@ class ReaderWindow(QDialog):
     def _mark_seam_y(self, y):
         """给当前视口内 y 像素处的视觉行画拼接下划线（越界则清除标记）"""
         vh = self.browser.viewport().height()
-        if not self.settings.value('page_mark', True, bool) \
+        if not self._layout_ready or \
+                not self.settings.value('page_mark', True, bool) \
                 or y < 0 or y > vh:
             self.page_mark_pos = None
             self.page_mark_y = None

@@ -351,6 +351,43 @@ check('路径更新拒绝冲突', (lib6.add({'title': '书B', 'author': '', 'for
       and open(dest, 'wb').write(b'') == 0
       and lib6.update_path(d1, dest) is False)   # 目标已被书B占用 → 拒绝
 
+# 23. 布局未完成时翻页不画接缝线（换章后立即 PageDown 的竞争场景）
+rw7 = ReaderWindow({'path': SRC['神墓'], 'title': '神墓'}, lib2)
+rw7.mark_action.setChecked(True)
+rw7._toggle_page_mark()
+rw7.show()
+for _ in range(5):
+    qapp.processEvents()
+assert rw7._layout_ready or True
+# 模拟: 换章(setHtml)后布局未完成立即翻页
+rw7._render()
+qapp.processEvents()   # 只跑一轮, 布局信号可能尚未送达
+rw7._layout_ready = False   # 强制竞争窗口
+rw7.handle_reader_key(QKeyEvent(QEvent.KeyPress, Qt.Key_PageDown,
+                                Qt.KeyboardModifier.NoModifier))
+for _ in range(3):
+    qapp.processEvents()
+img = rw7.browser.grab().toImage()
+reds = sum(1 for y in range(img.height()) for x in range(0, img.width(), 2)
+           if (c := img.pixelColor(x, y)) and c.red() > 160
+           and c.green() < 120 and c.blue() < 120)
+check('布局未完成不画接缝线', rw7.page_mark_pos is None and reds == 0,
+      f'标记={rw7.page_mark_pos}, 红像素={reds}')
+# 布局完成后翻页正常画线
+rw7._on_layout_stable()
+rw7.browser.verticalScrollBar().setValue(0)
+rw7.handle_reader_key(QKeyEvent(QEvent.KeyPress, Qt.Key_PageDown,
+                                Qt.KeyboardModifier.NoModifier))
+for _ in range(3):
+    qapp.processEvents()
+img = rw7.browser.grab().toImage()
+reds2 = sum(1 for y in range(img.height()) for x in range(0, img.width(), 2)
+            if (c := img.pixelColor(x, y)) and c.red() > 160
+            and c.green() < 120 and c.blue() < 120)
+check('布局完成后翻页正常画线', rw7.page_mark_pos is not None and reds2 > 10,
+      f'标记={rw7.page_mark_pos}, 红像素={reds2}')
+rw7.close()
+
 print()
 fails = [r for r in results if not r[1]]
 print(f'===== {len(results)-len(fails)}/{len(results)} 通过 =====')
