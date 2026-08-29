@@ -113,6 +113,7 @@ class ReaderWindow(QDialog):
         self.mark_action = bar.addAction('翻页线', self._toggle_page_mark)
         self.mark_action.setCheckable(True)
         self.mark_action.setChecked(self.settings.value('page_mark', True, bool))
+        self._apply_mark_action_text()
         self.mark_action.setToolTip('翻页后在拼接页起始行显示下划线标记')
         self.fullscreen_action = bar.addAction('⛶ 全屏', self._toggle_fullscreen)
         self.fullscreen_action.setShortcut('F11')
@@ -258,6 +259,7 @@ class ReaderWindow(QDialog):
         self.settings.setValue('page_mark', on)
         if not on:
             self.page_mark_pos = None
+        self._apply_mark_action_text()
         self._update_extra_selections()
 
     # ---------------- 正文宽度 / 全屏 ----------------
@@ -288,17 +290,21 @@ class ReaderWindow(QDialog):
             self.showFullScreen()
 
     # ---------------- 翻页拼接线 ----------------
-    def _mark_seam(self, dy):
-        """记录滚动后新视口起始行的文档位置（dy<0 表示向上翻页记视口尾行）"""
-        if not self.settings.value('page_mark', True, bool):
+    def _mark_seam_y(self, y):
+        """给当前视口内 y 像素处的那一行画拼接下划线（越界则清除标记）"""
+        vh = self.browser.viewport().height()
+        if not self.settings.value('page_mark', True, bool) \
+                or y < 0 or y > vh:
+            self.page_mark_pos = None
+            self._update_extra_selections()
             return
-        if dy >= 0:
-            c = self.browser.cursorForPosition(QPoint(0, dy))
-        else:
-            vh = self.browser.viewport().height()
-            c = self.browser.cursorForPosition(QPoint(0, vh))
+        c = self.browser.cursorForPosition(QPoint(0, int(y)))
         self.page_mark_pos = c.position()
         self._update_extra_selections()
+
+    def _apply_mark_action_text(self):
+        on = self.settings.value('page_mark', True, bool)
+        self.mark_action.setText('翻页线: 开' if on else '翻页线: 关')
 
     def _update_extra_selections(self):
         """合并显示: 搜索高亮 + 翻页拼接线下划线"""
@@ -454,9 +460,11 @@ class ReaderWindow(QDialog):
             if sb.value() >= sb.maximum():
                 self._next()
             else:
-                self._mark_seam(int(sb.pageStep() * 0.92))   # 先记拼接行再滚动
-                sb.setValue(min(sb.value() + int(sb.pageStep() * 0.92),
-                                sb.maximum()))
+                old, amount = sb.value(), int(sb.pageStep() * 0.92)
+                new_val = min(old + amount, sb.maximum())
+                sb.setValue(new_val)
+                # 拼接行 = 旧翻页边界在新视口中的位置（被钳制时即剩余尾页的接缝）
+                self._mark_seam_y(old + amount - new_val)
             return True
         if key == Qt.Key_PageUp:
             if sb.value() <= 0:
@@ -464,8 +472,16 @@ class ReaderWindow(QDialog):
                     self.pending_scroll = 1.0
                     self._prev()
             else:
-                self._mark_seam(-int(sb.pageStep() * 0.92))
-                sb.setValue(max(sb.value() - int(sb.pageStep() * 0.92), 0))
+                old, amount = sb.value(), int(sb.pageStep() * 0.92)
+                new_val = max(old - amount, 0)
+                sb.setValue(new_val)
+                seam_y = old - new_val          # 旧首行在新视口中的位置
+                vh = self.browser.viewport().height()
+                if seam_y <= vh:
+                    self._mark_seam_y(seam_y)
+                else:
+                    self.page_mark_pos = None
+                    self._update_extra_selections()
             return True
         if key == Qt.Key_Down:
             sb.setValue(min(sb.value() + max(sb.singleStep(), 4), sb.maximum()))
