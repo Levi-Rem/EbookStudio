@@ -318,8 +318,11 @@ class ReaderWindow(QDialog):
             block = cur.block()
             if block.isValid():
                 sel = QTextEdit.ExtraSelection()
-                bc = QTextCursor(block)          # 覆盖整行
-                sel.cursor = bc
+                c = QTextCursor(block)           # 指向行首
+                # ExtraSelection 要求 cursor 有选中范围才渲染：选中整行文字
+                c.movePosition(QTextCursor.MoveOperation.EndOfBlock,
+                               QTextCursor.MoveMode.KeepAnchor)
+                sel.cursor = c
                 sel.format.setFontUnderline(True)
                 sel.format.setUnderlineColor(QColor('#d9534f'))
                 sels.append(sel)

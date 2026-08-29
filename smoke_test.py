@@ -263,20 +263,25 @@ check('目录栏 PageDown 转发正文', consumed and sb5.value() > v0,
       f'消费={consumed}, 滚动 {v0}->{sb5.value()}')
 rw5.close()
 
-# 22. 翻页拼接线：PageDown 后标记出现，关闭开关后消失
+# 22. 翻页拼接线：PageDown 后标记出现（像素级验证渲染），关闭开关后消失
 rw6 = ReaderWindow({'path': SRC['神墓'], 'title': '神墓'}, lib2)
 rw6.mark_action.setChecked(True)       # 恢复默认开（上次运行可能持久化为关）
 rw6._toggle_page_mark()
 rw6.show()
 qapp.processEvents()
-sb6 = rw6.browser.verticalScrollBar()
 rw6.handle_reader_key(QKeyEvent(QEvent.KeyPress, Qt.Key_PageDown,
                                 Qt.KeyboardModifier.NoModifier))
-qapp.processEvents()
+for _ in range(3):
+    qapp.processEvents()
 sels6 = rw6.browser.extraSelections()
-has_underline = any(s.format.fontUnderline() for s in sels6)
-check('翻页线标记出现', rw6.page_mark_pos is not None and has_underline,
-      f'pos={rw6.page_mark_pos}, selections={len(sels6)}')
+ul = [s for s in sels6 if s.format.fontUnderline() and
+      s.cursor.anchor() != s.cursor.position()]
+img = rw6.browser.grab().toImage()
+reds = sum(1 for y in range(img.height()) for x in range(0, img.width(), 2)
+           if (c := img.pixelColor(x, y)) and c.red() > 160
+           and c.green() < 120 and c.blue() < 120)
+check('翻页线标记渲染', rw6.page_mark_pos is not None and ul and reds > 10,
+      f'范围选区={len(ul)}, 红色像素={reds}')
 rw6.mark_action.setChecked(False)
 rw6._toggle_page_mark()
 qapp.processEvents()
