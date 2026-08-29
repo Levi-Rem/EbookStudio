@@ -55,6 +55,7 @@ class ReaderWindow(QDialog):
         self.cur = 0
         self.pending_scroll = None      # 待恢复的滚动位置比例
         self.page_mark_pos = None       # 翻页拼接基准线（文档字符位置）
+        self.page_mark_y = None         # 拼接行在视口中的像素位置
         self._search_sels = []          # 搜索高亮 selections
         self.settings = QSettings('EbookStudio', 'reader')
         self.setWindowTitle(f'阅读 — {book_row["title"]}')
@@ -195,6 +196,7 @@ class ReaderWindow(QDialog):
         self.pos_lab.setText(f'{self.cur + 1} / {len(self.book.chapters)}')
         # 换章后拼接线与旧文档搜索高亮均失效
         self.page_mark_pos = None
+        self.page_mark_y = None
         self._search_sels = []
         self._update_extra_selections()
         self._save_position()
@@ -291,15 +293,17 @@ class ReaderWindow(QDialog):
 
     # ---------------- 翻页拼接线 ----------------
     def _mark_seam_y(self, y):
-        """给当前视口内 y 像素处的那一行画拼接下划线（越界则清除标记）"""
+        """给当前视口内 y 像素处的视觉行画拼接下划线（越界则清除标记）"""
         vh = self.browser.viewport().height()
         if not self.settings.value('page_mark', True, bool) \
                 or y < 0 or y > vh:
             self.page_mark_pos = None
+            self.page_mark_y = None
             self._update_extra_selections()
             return
         c = self.browser.cursorForPosition(QPoint(0, int(y)))
         self.page_mark_pos = c.position()
+        self.page_mark_y = int(y)
         self._update_extra_selections()
 
     def _apply_mark_action_text(self):
@@ -311,22 +315,26 @@ class ReaderWindow(QDialog):
         sels = list(self._search_sels)
         if self.page_mark_pos is not None and \
                 self.settings.value('page_mark', True, bool):
-            doc = self.browser.document()
-            pos = min(self.page_mark_pos, max(0, doc.characterCount() - 2))
-            cur = QTextCursor(doc)
-            cur.setPosition(pos)
-            block = cur.block()
-            if block.isValid():
+            # 只标记拼接处的单个视觉行（行首..行尾），不选整段——
+            # 长段落跨多屏会导致翻页后下划线仍跟随段落显示，形似残留
+            vw = self.browser.viewport().width()
+            start = self.browser.cursorForPosition(QPoint(0, self.page_mark_y))
+            end = self.browser.cursorForPosition(QPoint(vw - 1, self.page_mark_y))
+            if not start.isNull() and not end.isNull() and \
+                    end.position() >= start.position():
                 sel = QTextEdit.ExtraSelection()
-                c = QTextCursor(block)           # 指向行首
-                # ExtraSelection 要求 cursor 有选中范围才渲染：选中整行文字
-                c.movePosition(QTextCursor.MoveOperation.EndOfBlock,
-                               QTextCursor.MoveMode.KeepAnchor)
+                c = QTextCursor(self.browser.document())
+                c.setPosition(start.position())
+                c.setPosition(min(end.position(),
+                                   self.browser.document().characterCount() - 1),
+                              QTextCursor.MoveMode.KeepAnchor)
                 sel.cursor = c
                 sel.format.setFontUnderline(True)
                 sel.format.setUnderlineColor(QColor('#d9534f'))
                 sels.append(sel)
         self.browser.setExtraSelections(sels)
+        # 强制全视口重绘：Qt 对 extraSelections 的失效区域有时不含旧范围
+        self.browser.viewport().update()
 
     # ---------------- 搜索 ----------------
     def _toggle_search(self):

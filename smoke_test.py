@@ -263,7 +263,7 @@ check('目录栏 PageDown 转发正文', consumed and sb5.value() > v0,
       f'消费={consumed}, 滚动 {v0}->{sb5.value()}')
 rw5.close()
 
-# 22. 翻页拼接线：PageDown 后标记出现（像素级验证渲染），关闭开关后消失
+# 22. 翻页拼接线：PageDown 后标记出现（像素级验证渲染），连续翻页旧线不残留
 rw6 = ReaderWindow({'path': SRC['神墓'], 'title': '神墓'}, lib2)
 rw6.mark_action.setChecked(True)       # 恢复默认开（上次运行可能持久化为关）
 rw6._toggle_page_mark()
@@ -282,6 +282,34 @@ reds = sum(1 for y in range(img.height()) for x in range(0, img.width(), 2)
            and c.green() < 120 and c.blue() < 120)
 check('翻页线标记渲染', rw6.page_mark_pos is not None and ul and reds > 10,
       f'范围选区={len(ul)}, 红色像素={reds}')
+
+def red_pixel_rows(image):
+    """返回出现红色像素的行号集合（用于检测残留多行）"""
+    rows = set()
+    for y in range(image.height()):
+        for x in range(0, image.width(), 2):
+            c = image.pixelColor(x, y)
+            if c and c.red() > 160 and c.green() < 120 and c.blue() < 120:
+                rows.add(y)
+                break
+    return rows
+
+# 连续再翻 2 页: 下划线只应出现在一行（多行说明旧线残留）
+for _ in range(2):
+    rw6.handle_reader_key(QKeyEvent(QEvent.KeyPress, Qt.Key_PageDown,
+                                    Qt.KeyboardModifier.NoModifier))
+    for _ in range(3):
+        qapp.processEvents()
+rows2 = red_pixel_rows(rw6.browser.grab().toImage())
+# 一行文字的下划线像素可能跨 2~3 个扫描行(笔画粗细), 残留则会相隔甚远
+ys = sorted(rows2)
+spans = []
+for y in ys:
+    if spans and y - spans[-1][-1] <= 4:
+        spans[-1].append(y)
+    else:
+        spans.append([y])
+check('连续翻页无旧线残留', len(spans) == 1, f'下划线行簇={len(spans)} y范围={ys[:3]}...{ys[-3:] if len(ys)>3 else ""}')
 rw6.mark_action.setChecked(False)
 rw6._toggle_page_mark()
 qapp.processEvents()
