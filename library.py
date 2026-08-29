@@ -165,3 +165,20 @@ class Library:
             cur = self.conn.execute(
                 'SELECT * FROM reading_log ORDER BY id DESC LIMIT ?', (limit,))
             return [dict(r) for r in cur.fetchall()]
+
+    def update_path(self, old, new):
+        """书籍文件搬家后同步三张表（books 唯一键 + 书签/历史外键式关联）"""
+        if old == new:
+            return
+        with self.lock:
+            cur = self.conn.execute(
+                'SELECT id FROM books WHERE path=?', (new,))
+            if cur.fetchone():
+                return False        # 目标路径已被别的书占用，拒绝
+            self.conn.execute('UPDATE books SET path=? WHERE path=?', (new, old))
+            self.conn.execute('UPDATE bookmarks SET book_path=? WHERE book_path=?',
+                              (new, old))
+            self.conn.execute('UPDATE reading_log SET book_path=? WHERE book_path=?',
+                              (new, old))
+            self.conn.commit()
+            return True

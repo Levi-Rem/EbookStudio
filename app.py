@@ -4,10 +4,11 @@ EbookStudio — 迷你 Calibre：书库管理 + 高速转换 + 内置阅读
 
 启动: python app.py
 """
-import hashlib, os, sys, tempfile
+import hashlib, os, re, shutil, sys, tempfile
 
 from PySide6.QtCore import (
-    QAbstractTableModel, QModelIndex, QProcess, Qt, QSortFilterProxyModel, QUrl)
+    QAbstractTableModel, QModelIndex, QProcess, QSettings, Qt,
+    QSortFilterProxyModel, QUrl)
 from PySide6.QtGui import (
     QAction, QColor, QFont, QFontMetrics, QPainter, QPixmap, QDesktopServices)
 from PySide6.QtWidgets import (
@@ -67,6 +68,39 @@ def default_cover(title, author):
     p.drawText(30, 500, (author or ' ')[:20])
     p.end()
     return pm
+
+
+def sanitize_name(name, limit=80):
+    """文件/目录名安全化（Windows 非法字符替换 + 长度限制）"""
+    name = re.sub(r'[\\/:*?"<>|\r\n\t]', '_', str(name)).strip(' .')
+    return (name[:limit] or '_')
+
+
+def library_dest(lib_dir, title, author, ext):
+    """书库内目标路径: 书库根\\作者\\书名\\书名.ext"""
+    folder = os.path.join(lib_dir, sanitize_name(author or '未知作者'),
+                          sanitize_name(title))
+    return os.path.join(folder, sanitize_name(title) + ext)
+
+
+def copy_into_library(src, dest):
+    """复制书籍到书库；同名同大小视为已存在，同名不同大小加序号。
+    返回最终路径。"""
+    if os.path.abspath(src) == os.path.abspath(dest):
+        return dest
+    if os.path.exists(dest) and \
+            os.path.getsize(dest) == os.path.getsize(src):
+        return dest
+    if os.path.exists(dest):
+        stem, e = os.path.splitext(dest)
+        for i in range(2, 100):
+            cand = f'{stem} ({i}){e}'
+            if not os.path.exists(cand):
+                dest = cand
+                break
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    shutil.copy2(src, dest)
+    return dest
 
 
 COL_KEYS = {'书名': 'title', '作者': 'author', '格式': 'format',
@@ -154,6 +188,7 @@ class MainWindow(QMainWindow):
         os.makedirs(DATA_DIR, exist_ok=True)
         os.makedirs(COVER_DIR, exist_ok=True)
         self.lib = library.Library(DB_PATH)
+        self.settings = QSettings('EbookStudio', 'app')
         self.model = LibraryModel()
         self.proxy = QSortFilterProxyModel()
         self.proxy.setSourceModel(self.model)
@@ -185,11 +220,18 @@ class MainWindow(QMainWindow):
         a_del.triggered.connect(self.remove_selected)
         a_hist = QAction('阅读历史', self)
         a_hist.triggered.connect(self.show_history)
+        a_dir = QAction('书库目录', self)
+        a_dir.triggered.connect(self.configure_library_dir)
+        a_organize = QAction('整理入库', self)
+        a_organize.triggered.connect(self.organize_into_library)
         for a in (a_scan, a_add):
             tb.addAction(a)
         tb.addSeparator()
         for a in (a_read, a_conv, a_open, a_del, a_hist):
             tb.addAction(a)
+        tb.addSeparator()
+        tb.addAction(a_dir)
+        tb.addAction(a_organize)
         self.read_action, self.conv_action = a_read, a_conv
 
         central = QWidget()
@@ -232,6 +274,67 @@ class MainWindow(QMainWindow):
             if item.widget():
                 item.widget().deleteLater()
 
+    # ---------- 书库目录（导入的文件复制一份存放于此） ----------
+    def library_dir(self):
+        return self.settings.value('library_dir', '', str)
+
+    def _ensure_library_dir(self):
+        """导入前确保已设置书库目录；未设置则弹窗选择"""
+        d = self.library_dir()
+        if d and os.path.isdir(d):
+            return d
+        QMessageBox.information(
+            self, '书库目录',
+            '首次使用请先选择一个文件夹作为书库目录。\n'
+            '之后导入的书籍会复制一份保存到「书库目录\\作者\\书名\\」下，\n'
+            '原文件保持不动。')
+        d = QFileDialog.getExistingDirectory(self, '选择书库目录')
+        if d:
+            self.settings.setValue('library_dir', d)
+        return d if d else None
+
+    def configure_library_dir(self):
+        cur = self.library_dir()
+        QMessageBox.information(
+            self, '书库目录',
+            f'当前书库目录：\n{cur or "（未设置）"}\n\n'
+            '导入的书籍会复制到「书库目录\\作者\\书名\\书名.扩展名」。\n'
+            '点击确定后可选择新目录（已有书籍不受影响）。')
+        d = QFileDialog.getExistingDirectory(self, '选择书库目录', cur or '')
+        if d:
+            self.settings.setValue('library_dir', d)
+            self.statusBar().showMessage(f'书库目录: {d}')
+
+    def organize_into_library(self):
+        """把现有条目指向的文件复制进书库目录并更新索引（书签/进度保留）"""
+        d = self._ensure_library_dir()
+        if not d:
+            return
+        rows = [r for r in self.lib.all()
+                if not r['path'].startswith(d)]      # 已在书库内的跳过
+        if not rows:
+            QMessageBox.information(self, '整理入库', '所有书籍都已在书库目录中')
+            return
+        if QMessageBox.question(
+                self, '整理入库',
+                f'将 {len(rows)} 本复制到书库目录（原文件保留），继续？'
+                ) != QMessageBox.StandardButton.Yes:
+            return
+        moved, skipped = 0, 0
+        for r in rows:
+            if not os.path.exists(r['path']):
+                skipped += 1
+                continue
+            ext = os.path.splitext(r['path'])[1].lower()
+            dest = library_dest(d, r['title'], r.get('author', ''), ext)
+            dest = copy_into_library(r['path'], dest)
+            self.lib.update_path(r['path'], dest)
+            moved += 1
+        self.refresh()
+        self.statusBar().showMessage(
+            f'整理入库完成：{moved} 本已复制到 {d}'
+            + (f'，{skipped} 本源文件缺失跳过' if skipped else ''))
+
     # ---------- 数据 ----------
     def refresh(self):
         q = self.search.text()
@@ -252,13 +355,22 @@ class MainWindow(QMainWindow):
         return path
 
     def import_paths(self, paths):
+        """导入：复制一份到书库目录（作者\\书名\\ 结构）再建立索引。
+        源文件与书库副本为同一路径时跳过复制。"""
+        d = self._ensure_library_dir()
+        if not d:
+            return 0
         n = 0
         for p in paths:
-            if not os.path.splitext(p)[1].lower() in EXTS or not os.path.isfile(p):
+            ext = os.path.splitext(p)[1].lower()
+            if ext not in EXTS or not os.path.isfile(p):
                 continue
             probe = metadata.probe(p)
+            dest = copy_into_library(p, library_dest(
+                d, probe['title'], probe['author'], ext))
+            probe['cover'] = probe['cover'] or None
             cover = self.save_cover(probe)
-            if self.lib.add(probe, os.path.abspath(p), cover):
+            if self.lib.add(probe, os.path.abspath(dest), cover):
                 n += 1
         self.refresh()
         return n

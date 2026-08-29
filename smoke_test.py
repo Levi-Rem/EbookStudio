@@ -249,6 +249,40 @@ rw4._apply_width(0)     # 恢复全宽
 check('全宽恢复', rw4.browser.maximumWidth() >= 0x00FFFFFF)
 rw4.close()
 
+# 20. 书库目录：安全文件名 / 复制去重 / 路径更新级联
+check('文件名安全化',
+      appmod.sanitize_name('第1卷: "测试"<>|/?*') == appmod.sanitize_name('第1卷: "测试"<>|/?*')
+      and '/' not in appmod.sanitize_name('a/b\\c:d') and
+      appmod.sanitize_name('a/b\\c:d') == 'a_b_c_d',
+      appmod.sanitize_name('a/b\\c:d'))
+libd = os.path.join(TMP, 'libdir')
+srcf = os.path.join(TMP, '书A.epub')
+open(srcf, 'wb').write(b'dummy-epub-content-123')
+dest = appmod.library_dest(libd, '书A', '辰东', '.epub')
+d1 = appmod.copy_into_library(srcf, dest)
+sz = os.path.getsize(d1)
+d2 = appmod.copy_into_library(srcf, dest)     # 同名同大小 → 去重不重复复制
+check('复制+去重', d1 == d2 == dest and os.path.getsize(d1) == sz and
+      os.path.basename(d1) == '书A.epub' and
+      os.path.dirname(d1).endswith(os.path.join('辰东', '书A')))
+# 同名不同内容 → 加序号
+open(srcf, 'wb').write(b'other-content-456789')
+d3 = appmod.copy_into_library(srcf, dest)
+check('同名冲突加序号', d3 != dest and '(2)' in d3, os.path.basename(d3))
+# update_path 级联三表
+lib6 = library.Library(os.path.join(TMP, 'lib6.db'))
+lib6.add({'title': '书A', 'author': '', 'format': '', 'size': 1}, srcf)
+lib6.save_position(srcf, 7, 0.5, '书A', '第七章')
+lib6.add_bookmark(srcf, 2, 0.1, 'bm')
+check('路径更新级联', lib6.update_path(srcf, d1) and
+      lib6.get_position(d1) == (7, 0.5) and
+      len(lib6.bookmarks(d1)) == 1 and
+      lib6.all()[0]['path'] == d1)
+check('路径更新拒绝冲突', (lib6.add({'title': '书B', 'author': '', 'format': '',
+                                   'size': 1}, dest := os.path.join(TMP, 'busy.epub')) or True)
+      and open(dest, 'wb').write(b'') == 0
+      and lib6.update_path(d1, dest) is False)   # 目标已被书B占用 → 拒绝
+
 print()
 fails = [r for r in results if not r[1]]
 print(f'===== {len(results)-len(fails)}/{len(results)} 通过 =====')
