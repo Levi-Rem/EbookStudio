@@ -1,0 +1,16 @@
+# 用户本地数据（书库数据库、封面缓存）
+data/
+covers/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# IDE / 系统
+.idea/
+.vscode/
+Thumbs.db
+Desktop.ini
