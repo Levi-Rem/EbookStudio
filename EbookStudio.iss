@@ -2,7 +2,7 @@
 ; 编译: ISCC.exe EbookStudio.iss
 
 #define MyAppName "EbookStudio"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "1.1.0"
 #define MyAppPublisher "Levi-Rem"
 #define MyAppExeName "EbookStudio.exe"
 

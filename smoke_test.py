@@ -265,6 +265,8 @@ rw5.close()
 
 # 22. 翻页拼接线：PageDown 后标记出现，关闭开关后消失
 rw6 = ReaderWindow({'path': SRC['神墓'], 'title': '神墓'}, lib2)
+rw6.mark_action.setChecked(True)       # 恢复默认开（上次运行可能持久化为关）
+rw6._toggle_page_mark()
 rw6.show()
 qapp.processEvents()
 sb6 = rw6.browser.verticalScrollBar()
